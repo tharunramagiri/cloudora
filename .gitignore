@@ -1,0 +1,9 @@
+node_modules/
+__pycache__/
+*.pyc
+.env
+tokens.txt
+*.db
+dist/
+.tmp/
+temp_*

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudora - Telegram Cloud Storage</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        .upload-zone { border: 2px dashed #374151; transition: all 0.3s; }
+        .upload-zone:hover, .upload-zone.dragover { border-color: #3b82f6; background: rgba(59,130,246,0.1); }
+        .file-item { transition: all 0.2s; }
+        .file-item:hover { background: rgba(59,130,246,0.05); }
+        .toast { animation: slideIn 0.3s ease; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .skeleton { background: linear-gradient(90deg, #1f2937 25%, #374151 50%, #1f2937 75%); background-size: 200% 100%; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen font-sans antialiased">
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                        <i class="fas fa-cloud text-white text-sm"></i>
+                    </div>
+                    <span class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Cloudora</span>
+                </div>
+                <div class="flex items-center gap-4">
+                    <div class="relative">
+                        <input type="password" id="apiKeyInput" placeholder="API Key"
+                               class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm w-48 focus:outline-none focus:border-blue-500 text-gray-300 placeholder-gray-500">
+                    </div>
+                    <button onclick="saveKey()" class="bg-blue-600 hover:bg-blue-700 text-sm px-4 py-1.5 rounded-lg transition">Save</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center"><i class="fas fa-folder text-blue-400"></i></div>
+                    <div><p class="text-2xl font-bold" id="statFiles">0</p><p class="text-xs text-gray-500">Total Files</p></div>
+                </div>
+            </div>
+            <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center"><i class="fas fa-database text-green-400"></i></div>
+                    <div><p class="text-2xl font-bold" id="statSize">0 MB</p><p class="text-xs text-gray-500">Total Size</p></div>
+                </div>
+            </div>
+            <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center"><i class="fas fa-eye text-purple-400"></i></div>
+                    <div><p class="text-2xl font-bold" id="statViews">0</p><p class="text-xs text-gray-500">Total Views</p></div>
+                </div>
+            </div>
+            <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center"><i class="fas fa-telegram text-amber-400"></i></div>
+                    <div><p class="text-2xl font-bold" id="statBots">-</p><p class="text-xs text-gray-500">Active Bots</p></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Zone -->
+        <div class="bg-gray-900 rounded-xl border border-gray-800 p-8 mb-8">
+            <div id="uploadZone" class="upload-zone rounded-xl p-12 text-center cursor-pointer">
+                <i class="fas fa-cloud-upload-alt text-4xl text-gray-600 mb-4"></i>
+                <h3 class="text-lg font-medium mb-2">Drop files here or click to upload</h3>
+                <p class="text-sm text-gray-500">Files are stored in Telegram's cloud — unlimited storage</p>
+                <input type="file" id="fileInput" class="hidden" multiple>
+            </div>
+            <div id="uploadProgress" class="hidden mt-4">
+                <div class="flex items-center gap-3">
+                    <div class="flex-1 bg-gray-800 rounded-full h-2"><div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all" style="width:0%"></div></div>
+                    <span class="text-sm text-gray-400" id="progressText">0%</span>
+                </div>
+                <p class="text-sm text-gray-500 mt-1" id="progressFilename"></p>
+            </div>
+        </div>
+
+        <!-- Files -->
+        <div class="bg-gray-900 rounded-xl border border-gray-800">
+            <div class="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+                <h2 class="font-semibold"><i class="fas fa-list mr-2 text-blue-400"></i>Files</h2>
+                <div class="flex gap-2">
+                    <div class="relative">
+                        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
+                        <input type="text" id="searchInput" placeholder="Search files..." oninput="loadFiles()"
+                               class="bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 w-48">
+                    </div>
+                    <button onclick="loadFiles()" class="bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg text-sm"><i class="fas fa-sync-alt"></i></button>
+                </div>
+            </div>
+            <div id="filesList" class="divide-y divide-gray-800">
+                <div class="p-12 text-center text-gray-600"><i class="fas fa-spinner fa-spin text-2xl mb-3"></i><p>Loading files...</p></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed top-4 right-4 z-50 hidden"></div>
+
+    <script>
+        let API_KEY = localStorage.getItem('cloudora_api_key') || '';
+
+        function saveKey() {
+            const k = document.getElementById('apiKeyInput').value;
+            if (k) { API_KEY = k; localStorage.setItem('cloudora_api_key', k); toast('API key saved', 'success'); }
+        }
+
+        function toast(msg, type = 'info') {
+            const t = document.getElementById('toast');
+            const colors = { success: 'bg-green-600', error: 'bg-red-600', info: 'bg-blue-600' };
+            const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle' };
+            t.className = `fixed top-4 right-4 z-50 toast ${colors[type]} text-white px-5 py-3 rounded-lg shadow-lg flex items-center gap-2`;
+            t.innerHTML = `<i class="fas ${icons[type]}"></i> ${msg}`;
+            t.classList.remove('hidden');
+            setTimeout(() => t.classList.add('hidden'), 4000);
+        }
+
+        function formatSize(bytes) {
+            if (!bytes) return '0 B';
+            const u = ['B','KB','MB','GB']; let i = 0;
+            while (bytes >= 1024 && i < u.length-1) { bytes /= 1024; i++; }
+            return bytes.toFixed(i > 0 ? 1 : 0) + ' ' + u[i];
+        }
+
+        function getMimeIcon(mime) {
+            if (!mime) return 'fa-file';
+            if (mime.startsWith('image/')) return 'fa-file-image';
+            if (mime.startsWith('video/')) return 'fa-file-video';
+            if (mime.startsWith('audio/')) return 'fa-file-audio';
+            if (mime.includes('pdf')) return 'fa-file-pdf';
+            if (mime.includes('zip') || mime.includes('rar') || mime.includes('tar')) return 'fa-file-archive';
+            if (mime.includes('text') || mime.includes('json') || mime.includes('javascript')) return 'fa-file-code';
+            return 'fa-file';
+        }
+
+        function getMimeColor(mime) {
+            if (!mime) return 'text-gray-400';
+            if (mime.startsWith('image/')) return 'text-green-400';
+            if (mime.startsWith('video/')) return 'text-purple-400';
+            if (mime.startsWith('audio/')) return 'text-amber-400';
+            if (mime.includes('pdf')) return 'text-red-400';
+            if (mime.includes('zip') || mime.includes('rar')) return 'text-yellow-400';
+            if (mime.includes('text') || mime.includes('json')) return 'text-blue-400';
+            return 'text-gray-400';
+        }
+
+        async function apiFetch(url, opts = {}) {
+            const headers = { ...opts.headers };
+            if (API_KEY) headers['X-API-Key'] = API_KEY;
+            if (opts.body && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+            const res = await fetch(url, { ...opts, headers });
+            if (res.status === 403) { toast('Invalid API key', 'error'); throw new Error('Unauthorized'); }
+            return res;
+        }
+
+        async function loadStats() {
+            try {
+                const res = await apiFetch('/api/stats');
+                if (!res.ok) return;
+                const d = await res.json();
+                document.getElementById('statFiles').textContent = d.total_files;
+                document.getElementById('statSize').textContent = formatSize(d.total_size_bytes);
+                document.getElementById('statViews').textContent = d.total_views;
+            } catch(e) {}
+        }
+
+        async function loadFiles() {
+            const el = document.getElementById('filesList');
+            const q = document.getElementById('searchInput').value;
+            try {
+                const res = await apiFetch('/api/files?limit=50' + (q ? '&search='+encodeURIComponent(q) : ''));
+                if (!res.ok) { el.innerHTML = '<div class="p-12 text-center text-gray-500">Enter API key to see files</div>'; return; }
+                const files = await res.json();
+                if (!files.length) {
+                    el.innerHTML = '<div class="p-12 text-center text-gray-500"><i class="fas fa-inbox text-3xl mb-3 text-gray-700"></i><p>No files uploaded yet</p></div>';
+                    return;
+                }
+                el.innerHTML = files.map(f => `
+                    <div class="file-item px-6 py-4 flex items-center gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-gray-800 flex items-center justify-center">
+                            <i class="fas ${getMimeIcon(f.mime_type)} ${getMimeColor(f.mime_type)}"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium truncate">${f.file_name}</p>
+                            <p class="text-xs text-gray-500">${formatSize(f.file_size)} · ${new Date(f.upload_date).toLocaleDateString()} · ${f.view_count} views</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            ${f.share_url ? `<button onclick="copyUrl('${f.share_url}')" class="text-gray-500 hover:text-blue-400 p-2" title="Copy share link"><i class="fas fa-link"></i></button>` : ''}
+                            <a href="/dl/${f.file_id}/${f.file_name}" target="_blank" class="text-gray-500 hover:text-green-400 p-2" title="Download"><i class="fas fa-download"></i></a>
+                            <button onclick="deleteFile('${f.file_id}','${f.file_name}')" class="text-gray-500 hover:text-red-400 p-2" title="Delete"><i class="fas fa-trash"></i></button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch(e) {
+                el.innerHTML = '<div class="p-12 text-center text-gray-500">Enter API key to see files</div>';
+            }
+        }
+
+        async function deleteFile(id, name) {
+            if (!confirm(`Delete "${name}"?`)) return;
+            try {
+                const res = await apiFetch(`/api/files/${id}`, { method: 'DELETE' });
+                if (res.ok) { toast('File deleted', 'success'); loadFiles(); loadStats(); }
+            } catch(e) { toast('Delete failed', 'error'); }
+        }
+
+        function copyUrl(url) {
+            navigator.clipboard.writeText(url).then(() => toast('Link copied!', 'success'));
+        }
+
+        // Upload
+        const zone = document.getElementById('uploadZone');
+        const input = document.getElementById('fileInput');
+
+        zone.addEventListener('click', () => input.click());
+        zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('dragover'); uploadFiles(e.dataTransfer.files); });
+        input.addEventListener('change', () => { if (input.files.length) uploadFiles(input.files); });
+
+        async function uploadFiles(files) {
+            if (!API_KEY) { toast('Save your API key first', 'error'); return; }
+            const prog = document.getElementById('uploadProgress');
+            const bar = document.getElementById('progressBar');
+            const txt = document.getElementById('progressText');
+            const fn = document.getElementById('progressFilename');
+            prog.classList.remove('hidden');
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                fn.textContent = `Uploading (${i+1}/${files.length}): ${file.name}`;
+                bar.style.width = '0%'; txt.textContent = '0%';
+
+                const fd = new FormData();
+                fd.append('file', file);
+
+                try {
+                    const xhr = new XMLHttpRequest();
+                    xhr.upload.onprogress = (e) => {
+                        if (e.lengthComputable) {
+                            const pct = Math.round((e.loaded / e.total) * 100);
+                            bar.style.width = pct + '%';
+                            txt.textContent = pct + '%';
+                        }
+                    };
+                    await new Promise((resolve, reject) => {
+                        xhr.onload = () => {
+                            if (xhr.status === 200) resolve();
+                            else reject(new Error(xhr.responseText));
+                        };
+                        xhr.onerror = () => reject(new Error('Network error'));
+                        xhr.open('POST', '/upload');
+                        xhr.setRequestHeader('X-API-Key', API_KEY);
+                        xhr.send(fd);
+                    });
+                    toast(`${file.name} uploaded!`, 'success');
+                } catch(e) {
+                    toast(`${file.name}: ${e.message}`, 'error');
+                }
+            }
+            prog.classList.add('hidden');
+            loadFiles();
+            loadStats();
+        }
+
+        // Init
+        const savedKey = localStorage.getItem('cloudora_api_key');
+        if (savedKey) document.getElementById('apiKeyInput').placeholder = '••••••••';
+        loadStats();
+        loadFiles();
+        setInterval(loadStats, 10000);
+    </script>
+</body>
+</html>
