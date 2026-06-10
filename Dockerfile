@@ -2,12 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Copy all source code and install
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
-
-# Copy app code
 COPY cloudora/ cloudora/
+
+RUN pip install --no-cache-dir .
 
 # Create data directory
 RUN mkdir -p /app/data

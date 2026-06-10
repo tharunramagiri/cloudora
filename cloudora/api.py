@@ -3,15 +3,16 @@ import re
 import secrets
 import shutil
 import datetime
+import hashlib
 import logging
 from pathlib import Path
 from typing import Optional
+from fastapi.responses import RedirectResponse
 
 import httpx
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends, Header, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends, Header, Query, Response
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from . import settings
 from .database import (
@@ -33,9 +34,21 @@ api.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(exist_ok=True)
+
+# --- Session / Auth ---
+
+# In-memory session store (simple, resets on restart)
+_sessions: dict[str, str] = {}  # session_token -> username
+
+
+def _make_session_id() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _hash_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
 
 
 async def verify_api_key(
@@ -50,6 +63,20 @@ async def verify_api_key(
     if await verify_key_db(provided):
         return provided
     raise HTTPException(403, "Invalid API key")
+
+
+async def get_session_user(request: Request) -> Optional[str]:
+    token = request.cookies.get("cloudora_session")
+    if token and token in _sessions:
+        return _sessions[token]
+    return None
+
+
+async def require_session(request: Request):
+    user = await get_session_user(request)
+    if not user:
+        raise HTTPException(303, headers={"Location": "/login"})
+    return user
 
 
 @api.on_event("startup")
@@ -80,19 +107,126 @@ async def cleanup_loop():
         await asyncio.sleep(3600)
 
 
+# --- Login Page ---
+
+LOGIN_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudora - Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 min-h-screen flex items-center justify-center">
+    <div class="w-full max-w-md p-8">
+        <div class="text-center mb-8">
+            <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path>
+                </svg>
+            </div>
+            <h1 class="text-3xl font-bold text-white">Cloudora</h1>
+            <p class="text-gray-500 mt-2">Telegram Cloud Storage</p>
+        </div>
+        <div class="bg-gray-900 rounded-2xl p-8 border border-gray-800">
+            <form method="POST" action="/login" class="space-y-5">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">API Key / Password</label>
+                    <input type="password" name="key" required
+                           class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                           placeholder="Enter your admin API key">
+                </div>
+                <button type="submit"
+                        class="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium py-3 px-4 rounded-xl transition">
+                    Sign In
+                </button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>"""
+
+
+@api.get("/login", response_class=HTMLResponse)
+async def login_page():
+    return LOGIN_PAGE
+
+
+@api.post("/login")
+async def login_post(key: str = Form(...), response: Response = None):
+    # Validate key
+    valid = False
+    if key.strip() == settings.ADMIN_API_KEY.strip():
+        valid = True
+    elif await verify_key_db(key.strip()):
+        valid = True
+
+    if not valid:
+        return HTMLResponse(
+            LOGIN_PAGE.replace('</form>',
+                               '<p class="text-red-500 text-sm mt-3">Invalid key</p></form>'),
+            status_code=401,
+        )
+
+    session_token = _make_session_id()
+    _sessions[session_token] = "admin"
+
+    redirect = RedirectResponse(url="/", status_code=303)
+    redirect.set_cookie(
+        key="cloudora_session",
+        value=session_token,
+        max_age=86400 * 7,  # 7 days
+        httponly=True,
+        samesite="lax",
+        secure=False,  # Set True if HTTPS only
+    )
+    return redirect
+
+
+@api.get("/logout")
+async def logout(request: Request):
+    token = request.cookies.get("cloudora_session")
+    if token and token in _sessions:
+        del _sessions[token]
+    resp = RedirectResponse(url="/login")
+    resp.delete_cookie("cloudora_session")
+    return resp
+
+
+# --- Dashboard ---
+
 @api.get("/", response_class=HTMLResponse)
-async def dashboard():
+async def dashboard(request: Request):
+    user = await get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+
     index_path = static_dir / "index.html"
     if index_path.exists():
-        return index_path.read_text(encoding="utf-8")
+        html = index_path.read_text(encoding="utf-8")
+        # Inject user info & API key into the page
+        api_key = settings.ADMIN_API_KEY
+        html = html.replace(
+            "</head>",
+            f'<script>const CLOUDORA_API_KEY="{api_key}";const CLOUDORA_USER="admin";</script></head>',
+        )
+        # Remove the manual API key input
+        html = html.replace(
+            '<div class="relative">',
+            '<span class="text-sm text-gray-400 mr-2"><i class="fas fa-user mr-1"></i>admin</span><a href="/logout" class="text-sm text-red-400 hover:text-red-300">Logout</a><div class="relative hidden">',
+        )
+        return html
     return "<h1>Cloudora</h1><p>Dashboard not found</p>"
 
+
+# --- API Endpoints (same as before, but now protected by session or API key) ---
 
 @api.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
     expiration_days: int = Form(None),
     password: str = Form(None),
+    request: Request = None,
     auth: str = Depends(verify_api_key),
 ):
     bot = await cluster.get_healthy_bot()

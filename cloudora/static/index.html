@@ -30,12 +30,12 @@
                     </div>
                     <span class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Cloudora</span>
                 </div>
-                <div class="flex items-center gap-4">
+                <div class="flex items-center gap-4 hidden">
                     <div class="relative">
                         <input type="password" id="apiKeyInput" placeholder="API Key"
                                class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm w-48 focus:outline-none focus:border-blue-500 text-gray-300 placeholder-gray-500">
                     </div>
-                    <button onclick="saveKey()" class="bg-blue-600 hover:bg-blue-700 text-sm px-4 py-1.5 rounded-lg transition">Save</button>
+                    <button onclick="saveKey()" class="bg-blue-600 hover:bg-blue-700 text-sm px-4 py-1.5 rounded-lg transition hidden">Save</button>
                 </div>
             </div>
         </div>
@@ -110,12 +110,8 @@
     <div id="toast" class="fixed top-4 right-4 z-50 hidden"></div>
 
     <script>
-        let API_KEY = localStorage.getItem('cloudora_api_key') || '';
-
-        function saveKey() {
-            const k = document.getElementById('apiKeyInput').value;
-            if (k) { API_KEY = k; localStorage.setItem('cloudora_api_key', k); toast('API key saved', 'success'); }
-        }
+        let API_KEY = (typeof CLOUDORA_API_KEY !== 'undefined') ? CLOUDORA_API_KEY : '';
+        if (!API_KEY) { window.location.href = '/login'; }
 
         function toast(msg, type = 'info') {
             const t = document.getElementById('toast');
@@ -276,8 +272,6 @@
         }
 
         // Init
-        const savedKey = localStorage.getItem('cloudora_api_key');
-        if (savedKey) document.getElementById('apiKeyInput').placeholder = '••••••••';
         loadStats();
         loadFiles();
         setInterval(loadStats, 10000);
